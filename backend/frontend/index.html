@@ -1,0 +1,224 @@
+<!-- frontend/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>问卷生成器</title>
+    <!-- 引入 Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 50px;
+        }
+        .container {
+            max-width: 800px;
+        }
+        .questions, .history {
+            margin-top: 30px;
+        }
+        .questionnaire {
+            background-color: #ffffff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .loading-spinner {
+            display: none;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1 class="mb-4 text-center">AI 问卷生成器</h1>
+    <form id="questionnaire-form">
+        <div class="mb-3">
+            <label for="long_text" class="form-label">请输入长文本内容或上传文本文件：</label>
+            <textarea class="form-control" id="long_text" name="long_text" style="display: none;" placeholder="直接输入文本内容..."></textarea>
+            <div class="input-group">
+                <input class="form-control" type="file" id="file_input" accept=".txt">
+                <button type="button" class="btn btn-secondary" id="toggle_text_input">直接输入文本</button>
+            </div>
+        </div>
+
+        <!-- 新增：题型选择 -->
+        <div class="mb-3">
+            <label for="question_type" class="form-label">题型选择：</label>
+            <select class="form-select" id="question_type" name="question_type">
+                <option value="普通问答题">普通问答题</option>
+                <option value="选择题">选择题</option>
+                <option value="判断题">判断题</option>
+            </select>
+        </div>
+        <!-- 新增结束 -->
+
+        <div class="mb-3">
+            <label for="num_questions" class="form-label">每2000字生成问题数量：</label>
+            <input type="number" class="form-control" id="num_questions" name="num_questions" value="5" min="1" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">生成问卷</button>
+    </form>
+
+    <div class="loading-spinner" id="loading-spinner">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">生成中...</span>
+        </div>
+        <p>生成中，请稍候...</p>
+    </div>
+
+    <div class="questions" id="questions"></div>
+    <div class="history" id="history"></div>
+</div>
+
+<!-- 引入 Bootstrap JS 和依赖 -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // 切换显示文本输入框
+    document.getElementById('toggle_text_input').addEventListener('click', function() {
+        const textArea = document.getElementById('long_text');
+        const fileInput = document.getElementById('file_input');
+        if (textArea.style.display === 'none') {
+            textArea.style.display = 'block';
+            fileInput.style.display = 'none';
+            this.innerText = '上传文本文件';
+        } else {
+            textArea.style.display = 'none';
+            fileInput.style.display = 'block';
+            this.innerText = '直接输入文本';
+        }
+    });
+
+    // 处理表单提交
+    document.getElementById('questionnaire-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const num_questions = parseInt(document.getElementById('num_questions').value);
+        const fileInput = document.getElementById('file_input');
+        let long_text = document.getElementById('long_text').value.trim();
+
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const questionsDiv = document.getElementById('questions');
+        const historyDiv = document.getElementById('history');
+        questionsDiv.innerHTML = '';
+        historyDiv.innerHTML = '';
+        loadingSpinner.style.display = 'block';
+
+        // 读取选中的题型
+        const questionType = document.getElementById('question_type').value;
+
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                long_text = event.target.result.trim();
+                sendRequest(long_text, num_questions, questionType);
+            };
+            reader.onerror = function() {
+                loadingSpinner.style.display = 'none';
+                alert('读取文件时出错，请重试。');
+            };
+            reader.readAsText(file, 'UTF-8');
+        } else if (long_text) {
+            sendRequest(long_text, num_questions, questionType);
+        } else {
+            loadingSpinner.style.display = 'none';
+            alert('请输入文本内容或上传文本文件。');
+        }
+    });
+
+    function sendRequest(long_text, num_questions, questionType) {
+        fetch('/api/generate_questionnaire', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                long_text: long_text,
+                num_questions_per_chunk: num_questions,
+                question_type: questionType
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            const loadingSpinner = document.getElementById('loading-spinner');
+            loadingSpinner.style.display = 'none';
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            const questionsDiv = document.getElementById('questions');
+            questionsDiv.innerHTML = '<h2>生成的问卷问题如下：</h2>';
+            const answers = [];
+            data.questions.forEach((q, index) => {
+                const div = document.createElement('div');
+                div.className = 'questionnaire';
+                div.innerHTML = `<strong>${index + 1}.</strong> ${q}<br>
+                <textarea class="form-control answer" rows="3" placeholder="请在这里输入您的答案"></textarea>`;
+                questionsDiv.appendChild(div);
+                answers.push(null);  // 初始化答案数组
+            });
+
+            // 提交按钮
+            const submitButton = document.createElement('button');
+            submitButton.textContent = '提交答案';
+            submitButton.className = 'btn btn-primary w-100 mt-3';
+            submitButton.onclick = function() {
+                const answerTexts = document.querySelectorAll('.answer');
+                answerTexts.forEach((textarea, i) => {
+                    answers[i] = textarea.value.trim();
+                });
+                submitAnswers(data.questions, answers);
+            };
+            questionsDiv.appendChild(submitButton);
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+            const loadingSpinner = document.getElementById('loading-spinner');
+            loadingSpinner.style.display = 'none';
+            alert('生成问卷时出错，请稍后再试。');
+        });
+    }
+
+    function submitAnswers(questions, answers) {
+        fetch('/api/submit_answers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                questions: questions,
+                answers: answers,
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.feedback) {
+                const feedbackDiv = document.createElement('div');
+                feedbackDiv.innerHTML = '<h2>批改结果</h2>';
+                data.feedback.forEach(item => {
+                    const feedbackItem = document.createElement('div');
+                    feedbackItem.className = 'questionnaire';
+                    feedbackItem.innerHTML = `<strong>问题：${item.question}</strong><br>
+                                              答案：${item.answer}<br>
+                                              得分：${item.score}分<br>
+                                              反馈：${item.feedback}`;
+                    feedbackDiv.appendChild(feedbackItem);
+                });
+                const totalScoreDiv = document.createElement('div');
+                totalScoreDiv.innerHTML = `<h3>总分：${data.total_score}分</h3>`;
+                feedbackDiv.appendChild(totalScoreDiv);
+                document.getElementById('history').innerHTML = '';
+                document.getElementById('history').appendChild(feedbackDiv);
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+            alert('提交答案时出错，请稍后再试。');
+        });
+    }
+</script>
+</body>
+</html>
